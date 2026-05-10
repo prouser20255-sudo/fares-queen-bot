@@ -19,19 +19,23 @@ const PORT = process.env.PORT || 10000;
 const TG_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
 const bot = new Telegraf(TG_TOKEN);
 const settingsFile = './settings.json';
-
-// التأكد من المجلدات والملفات
 const sessionsDir = path.join(__dirname, 'sessions');
+
+// تجهيز المجلدات والملفات
 fs.ensureDirSync(sessionsDir);
 if (!fs.existsSync(settingsFile)) {
     fs.writeJsonSync(settingsFile, { name: "GOLDEN QUEEN", emoji: "💚", mode: "public" });
 }
 
-// واجهة الويب لضمان بقاء السيرفر حياً (24 ساعة)
-app.get('/', (req, res) => res.send('GOLDEN QUEEN SYSTEM IS ACTIVE ✅'));
+// واجهة الويب لضمان عمل Render 24 ساعة
+app.get('/', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send('<h1>نظام الملكة الذهبية يعمل بنجاح ✅</h1><p>البوت متصل الآن ومستعد للعمل 24 ساعة.</p>');
+});
+
 app.listen(PORT, () => console.log(`Server started on ${PORT}`));
 
-// دالة جلب الإعدادات
+// دالة جلب الإعدادات المحدثة
 const getSettings = () => fs.readJsonSync(settingsFile);
 
 async function startWhatsApp(chatId, phoneNumber) {
@@ -39,7 +43,6 @@ async function startWhatsApp(chatId, phoneNumber) {
     fs.ensureDirSync(userSession);
 
     const { state, saveCreds } = await useMultiFileAuthState(userSession);
-    const { version } = await fetchLatestVersion();
 
     const sock = makeWASocket({
         auth: {
@@ -48,41 +51,38 @@ async function startWhatsApp(chatId, phoneNumber) {
         },
         printQRInTerminal: false,
         logger: pino({ level: "fatal" }),
-        browser: Browsers.ubuntu("Chrome"), // تغيير المتصفح لضمان عدم التوقف
+        browser: Browsers.ubuntu("Chrome"), // تم التغيير لحل مشكلة تعليق تسجيل الدخول
         syncFullHistory: false,
         markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000 // إرسال نبضات للسيرفر كل 10 ثواني للبقاء متصلاً
+        keepAliveIntervalMs: 30000 
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     if (!sock.authState.creds.registered) {
-        await delay(4000);
+        await delay(5000); // تأخير لضمان استقرار الاتصال قبل طلب الكود
         try {
             let code = await sock.requestPairingCode(phoneNumber);
             code = code?.match(/.{1,4}/g)?.join("-") || code;
-            await bot.telegram.sendMessage(chatId, `🔢 كود الاقتران الخاص بك:\n\n\`${code}\`\n\nقم بإدخاله في الواتساب الآن.`, { parse_mode: 'Markdown' });
+            await bot.telegram.sendMessage(chatId, `🔢 **كود الاقتران الخاص بك:**\n\n\`${code}\`\n\nقم بإدخاله في الواتساب الآن (الأجهزة المرتبطة > ربط هاتف).`, { parse_mode: 'Markdown' });
         } catch (e) {
-            await bot.telegram.sendMessage(chatId, "❌ فشل طلب الكود. حاول لاحقاً.");
+            console.error(e);
+            await bot.telegram.sendMessage(chatId, "❌ فشل طلب الكود. يرجى المحاولة مرة أخرى بعد قليل.");
         }
     }
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log("إعادة الاتصال تلقائياً...");
-                startWhatsApp(chatId, phoneNumber);
-            }
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) startWhatsApp(chatId, phoneNumber);
         } else if (connection === 'open') {
-            await bot.telegram.sendMessage(chatId, "✅ تم ربط الواتساب بنجاح! البوت سيعمل الآن 24 ساعة بدون توقف.");
+            bot.telegram.sendMessage(chatId, "✅ تم ربط الواتساب بنجاح!\nالبوت سيتفاعل مع الحالات الآن 24 ساعة بدون توقف.");
         }
     });
 
-    // التفاعل التلقائي مع الحالات والأوامر
+    // التفاعل مع الحالات والأوامر
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message) return;
@@ -92,53 +92,59 @@ async function startWhatsApp(chatId, phoneNumber) {
         const config = getSettings();
         const msgText = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
-        // أوامر المالك من داخل الواتساب
+        // نظام الأوامر من الرقم المربوط (أنت)
         if (isMe) {
             if (msgText === 'اوامر') {
-                const menu = `👑 *لوحة تحكم GOLDEN QUEEN*\n\n🔹 الايموجي الحالي: ${config.emoji}\n🔹 الحالة: متصل ونشط ✅\n\n*الأوامر:* \n.تغيير [الايموجي]\n.تحديث (لإعادة التشغيل)`;
+                const menu = `👑 *إعدادات الملكة الذهبية*\n\n` +
+                             `⚙️ الإيموجي الحالي: ${config.emoji}\n` +
+                             `📈 الحالة: نشط 24/7\n\n` +
+                             `*الأوامر المتاحة:*\n` +
+                             `1️⃣ .تغيير (وضع الإيموجي الجديد)\n` +
+                             `2️⃣ .تحديث (إعادة تشغيل البوت)`;
                 await sock.sendMessage(remoteJid, { text: menu });
             }
             if (msgText.startsWith('.تغيير ')) {
                 const newEmoji = msgText.split(' ')[1];
-                fs.writeJsonSync(settingsFile, { ...config, emoji: newEmoji });
-                await sock.sendMessage(remoteJid, { text: `✅ تم تغيير إيموجي التفاعل إلى: ${newEmoji}` });
+                if (newEmoji) {
+                    fs.writeJsonSync(settingsFile, { ...config, emoji: newEmoji });
+                    await sock.sendMessage(remoteJid, { text: `✅ تم تحديث إيموجي التفاعل إلى: ${newEmoji}` });
+                }
             }
             if (msgText === '.تحديث') {
-                await sock.sendMessage(remoteJid, { text: "🔄 جاري إعادة التشغيل..." });
+                await sock.sendMessage(remoteJid, { text: "🔄 جاري إعادة تشغيل النظام..." });
                 process.exit();
             }
         }
 
-        // التفاعل مع الحالات تلقائياً بناءً على الإيموجي المحفوظ
+        // التفاعل التلقائي مع الحالات
         if (!isMe && remoteJid === 'status@broadcast') {
-            await sock.readMessages([msg.key]);
-            await sock.sendMessage(remoteJid, { react: { text: config.emoji, key: msg.key } }, { statusJidList: [msg.key.participant] });
+            try {
+                await sock.readMessages([msg.key]);
+                await sock.sendMessage(remoteJid, { react: { text: config.emoji, key: msg.key } }, { statusJidList: [msg.key.participant] });
+            } catch (e) {
+                // خطأ بسيط في القراءة، يتم التخطي
+            }
         }
     });
 }
 
-// وظيفة لجلب إصدار واتساب لضمان التوافق
-async function fetchLatestVersion() {
-    return { version: [2, 3000, 1015901307] };
-}
-
 // بوت تليجرام
 bot.start((ctx) => {
-    ctx.reply("مرحباً بك في بوت Fares Queen المتطور 👑\nأرسل رقمك الآن (مثال: 96777xxxxxxx) للحصول على كود الربط.");
+    ctx.reply("👑 مرحباً بك في نظام الملكة الذهبية المطور.\nأرسل رقمك الآن مع مفتاح الدولة (مثال: 96777xxxxxxx) للبدء.");
 });
 
 bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (/^\d+$/.test(text)) {
-        await ctx.reply("⏳ جاري طلب الكود وتهيئة الاتصال الدائم...");
+        await ctx.reply("⏳ جاري تهيئة الاتصال وطلب الكود من واتساب...");
         startWhatsApp(ctx.chat.id, text);
     } else {
-        ctx.reply("⚠️ من فضلك أرسل الرقم فقط.");
+        ctx.reply("⚠️ يرجى إرسال أرقام فقط.");
     }
 });
 
-bot.launch().then(() => console.log("Telegram Bot Ready!"));
+bot.launch();
 
-// أوامر منع التوقف والانهيار (Critical for 24/7)
-process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
-process.on('unhandledRejection', (err) => console.error('Unhandled Rejection:', err));
+// معالجة الأخطاء لضمان الاستمرارية
+process.on('uncaughtException', (err) => console.log('Recovered from error:', err));
+process.on('unhandledRejection', (err) => console.log('Recovered from rejection:', err));
