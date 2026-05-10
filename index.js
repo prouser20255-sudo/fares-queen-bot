@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 10000;
 const token = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
 const bot = new TelegramBot(token, { polling: true });
 
-app.get('/', (req, res) => res.send('Golden Queen Active ✅'));
+app.get('/', (req, res) => res.send('System Status: Online ✅'));
 app.listen(PORT, '0.0.0.0');
 
 async function startWhatsApp(chatId, phone) {
@@ -28,31 +28,32 @@ async function startWhatsApp(chatId, phone) {
         const sock = makeWASocket({
             auth: state,
             logger: pino({ level: 'silent' }),
-            // استخدام هوية متصفح Safari لتبدو العملية طبيعية جداً لواتساب
-            browser: Browsers.macOS("Safari"), 
+            // الحل السحري: تعريف الجهاز كأنه iPad لضمان وصول الإشعار وقبول الكود
+            browser: ["Mac OS", "Safari", "10.15.7"], 
             syncFullHistory: false,
-            connectTimeoutMs: 60000
+            connectTimeoutMs: 120000, // زيادة وقت المهلة
+            defaultQueryTimeoutMs: 0
         });
 
         sock.ev.on('creds.update', saveCreds);
 
         if (!sock.authState.creds.registered) {
-            // انتظار 12 ثانية قبل طلب الكود (لحل مشكلة تجاهل الإشعارات)
-            await delay(12000); 
+            // انتظار 15 ثانية لتجنب رسالة "تعذر ربط الجهاز"
+            await delay(15000); 
             try {
                 let code = await sock.requestPairingCode(phone);
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
                 
-                await bot.sendMessage(chatId, `🔢 **كود الربط الجديد:**\n\n\`${code}\`\n\nأدخل الكود يدوياً في واتساب (الأجهزة المرتبطة > ربط برقم الهاتف).`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(chatId, `🔢 **كود الربط الجديد:**\n\n\`${code}\`\n\n⚠️ **الآن وبسرعة:**\n1️⃣ اذهب لواتساب > الأجهزة المرتبطة.\n2️⃣ اختر "ربط برقم الهاتف".\n3️⃣ أدخل الكود أعلاه.`);
             } catch (err) {
-                await bot.sendMessage(chatId, "❌ واتساب مشغول حالياً، جرب مرة أخرى بعد قليل.");
+                await bot.sendMessage(chatId, "❌ واتساب يمنع الربط حالياً، جرب بعد ساعة.");
             }
         }
 
         sock.ev.on('connection.update', async (u) => {
             const { connection, lastDisconnect } = u;
             if (connection === 'open') {
-                await bot.sendMessage(chatId, "🔓 **تم الربط بنجاح!** البوت سيعمل الآن بدون توقف.");
+                await bot.sendMessage(chatId, "🔓 **تم الربط بنجاح!** البوت لن يتوقف الآن.");
             }
             if (connection === 'close') {
                 if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
@@ -70,12 +71,12 @@ async function startWhatsApp(chatId, phone) {
             }
         });
 
-    } catch (e) { console.log(e); }
+    } catch (e) { console.log("Critical Error: ", e); }
 }
 
 bot.on('message', (msg) => {
     if (msg.text && /^\d+$/.test(msg.text)) {
-        bot.sendMessage(msg.chat.id, "⏳ جاري تهيئة الطلب.. يرجى الربط اليدوي إذا لم يصل الإشعار.");
+        bot.sendMessage(msg.chat.id, "⏳ جاري الطلب بهوية جديدة.. انتظر الإشعار أو اربط يدوياً.");
         startWhatsApp(msg.chat.id, msg.text);
     }
 });
