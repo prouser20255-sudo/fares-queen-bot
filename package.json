@@ -1,6 +1,6 @@
 {
-  "name": "golden-queen-v4",
-  "version": "4.0.0",
+  "name": "golden-queen-fixed",
+  "version": "5.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
