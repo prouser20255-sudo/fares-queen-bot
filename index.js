@@ -12,28 +12,40 @@ const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
 
-// --- الإعدادات ---
-const token = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
+// --- إعدادات البوت ---
+const TELEGRAM_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
 const CHANNEL_USER = "@fz_z_Z"; 
-const APP_URL = "https://fares-queen-bot.onrender.com"; 
+const APP_URL = "https://fares-queen-bot.onrender.com"; // رابط سيرفرك
 
 const app = express();
-const bot = new TelegramBot(token, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const sessions = new Map();
 const SESSIONS_DIR = './sessions';
+
 fs.ensureDirSync(SESSIONS_DIR);
 
-// إدارة الإعدادات
-const getUserSettings = (chatId) => {
-    const filePath = path.join(SESSIONS_DIR, String(chatId), 'settings.json');
-    return fs.existsSync(filePath) ? fs.readJsonSync(filePath) : { emoji: "👑", autoViewStatus: true, autoReactStatus: true, autoReplies: [] };
+// --- نظام البقاء نشطاً (Anti-Sleep) ---
+setInterval(() => {
+    axios.get(APP_URL).catch(() => {});
+}, 4 * 60 * 1000); // تنبيه كل 4 دقائق
+
+// --- إدارة إعدادات المستخدمين ---
+const getSettings = (chatId) => {
+    const file = path.join(SESSIONS_DIR, String(chatId), 'settings.json');
+    return fs.existsSync(file) ? fs.readJsonSync(file) : { emoji: "👑", autoView: true, autoReact: true, replies: [] };
 };
 
-// --- محرك الواتساب المحسن للتخفي ---
-async function startBot(chatId, phone) {
+const saveSettings = (chatId, data) => {
+    const dir = path.join(SESSIONS_DIR, String(chatId));
+    fs.ensureDirSync(dir);
+    fs.writeJsonSync(path.join(dir, 'settings.json'), data);
+};
+
+// --- محرك الواتساب المحسن ---
+async function startWhatsApp(chatId, phone) {
     const sessionDir = path.join(SESSIONS_DIR, String(chatId));
 
-    // تنظيف عميق للجلسة الفاشلة
+    // تنظيف أي محاولة ربط فاشلة سابقة لضمان الحصول على كود جديد
     if (sessions.has(chatId)) {
         try { sessions.get(chatId).end(); } catch (e) {}
         sessions.delete(chatId);
@@ -48,46 +60,80 @@ async function startBot(chatId, phone) {
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        // تغيير الهوية لتبدو كجهاز أندرويد حقيقي (Android Mobile)
-        browser: ["Ubuntu", "Chrome", "20.0.04"], 
-        syncFullHistory: false,
+        // تم تغيير المتصفح ليبدو كجهاز ماك لتقليل نسبة كشف البوتات
+        browser: ["Mac OS", "Chrome", "110.0.5481.177"], 
         printQRInTerminal: false,
-        connectTimeoutMs: 120000, // زيادة الوقت لدقيقتين
+        connectTimeoutMs: 100000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
     });
 
     sessions.set(chatId, sock);
 
+    // طلب كود الربط مع معالجة ذكية للأخطاء
     if (!sock.authState.creds.registered) {
-        // انتظار عشوائي بين 10 إلى 15 ثانية قبل طلب الكود لخداع نظام الفحص
-        const randomDelay = Math.floor(Math.random() * (15000 - 10000 + 1)) + 10000;
-        await delay(randomDelay);
-
+        await delay(8000); // انتظار استقرار الاتصال
         try {
             const code = await sock.requestPairingCode(phone);
             bot.sendMessage(chatId, `✅ كود الربط الخاص بك هو:\n\n\`${code}\``, { parse_mode: 'Markdown' });
-        } catch (e) {
-            console.error("Critical Error:", e);
-            bot.sendMessage(chatId, "❌ السيرفر محظور حالياً من واتساب.\n\n**لحل المشكلة:**\n1. انتظر ساعة كاملة بدون محاولات.\n2. أو جرب تشغيل البوت على منصة أخرى مثل (Koyeb أو Zeabur).");
+        } catch (err) {
+            console.error(err);
+            bot.sendMessage(chatId, "❌ فشل طلب الكود حالياً بسبب قيود واتساب على السيرفر.\nيرجى المحاولة بعد قليل أو استخدام رقم آخر.");
         }
     }
 
     sock.ev.on('creds.update', saveCreds);
+
     sock.ev.on('connection.update', (update) => {
-        if (update.connection === 'open') bot.sendMessage(chatId, "🔓 متصل الآن!");
-        if (update.connection === 'close' && update.lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) startBot(chatId, phone);
+        const { connection, lastDisconnect } = update;
+        if (connection === 'open') {
+            bot.sendMessage(chatId, "🔓 متصل بنجاح! البوت يقوم بمشاهدة الحالات والتفاعل الآن.");
+        }
+        if (connection === 'close') {
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            if (reason !== DisconnectReason.loggedOut) startWhatsApp(chatId, phone);
+        }
+    });
+
+    // معالجة الرسائل والحالات
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const m = messages[0];
+        if (!m.message || m.key.fromMe) return;
+
+        const config = getSettings(chatId);
+        const jid = m.key.remoteJid;
+
+        if (jid === 'status@broadcast') {
+            if (config.autoView) await sock.readMessages([m.key]);
+            if (config.autoReact) {
+                await sock.sendMessage('status@broadcast', { 
+                    react: { key: m.key, text: config.emoji } 
+                }, { statusJidList: [m.key.participant || m.key.remoteJid] });
+            }
+            return;
+        }
+
+        const text = (m.message.conversation || m.message.extendedTextMessage?.text || "").toLowerCase().trim();
+        if (text === 'فحص') {
+            await sock.sendMessage(jid, { text: "✅ البوت متصل ونظام الملكة يعمل!" }, { quoted: m });
+        }
+        
+        const reply = config.replies.find(r => r.key.toLowerCase() === text);
+        if (reply) await sock.sendMessage(jid, { text: reply.res }, { quoted: m });
     });
 }
 
-// تشغيل السيرفر
-app.get('/', (req, res) => res.json({ status: "running" }));
-app.listen(process.env.PORT || 10000);
-
-// تليجرام
+// --- أوامر تليجرام ---
 bot.on('message', async (msg) => {
-    if (msg.text && /^[0-9]{10,}$/.test(msg.text.replace('+', ''))) {
-        bot.sendMessage(msg.chat.id, "⏳ جاري محاولة تجاوز الفحص وطلب الكود...");
-        startBot(msg.chat.id, msg.text.replace(/[^0-9]/g, ''));
+    const chatId = msg.chat.id;
+    const text = msg.text;
+
+    if (text === '/start') {
+        bot.sendMessage(chatId, "👋 أهلاً بك! ارسل رقم واتساب الخاص بك مع مفتاح الدولة للربط.\nمثال: `967771234567`", { parse_mode: 'Markdown' });
+    } else if (/^[0-9]{10,}$/.test(text?.replace('+', ''))) {
+        bot.sendMessage(chatId, "⏳ جاري محاولة إنشاء جلسة وطلب الكود...");
+        startWhatsApp(chatId, text.replace(/[^0-9]/g, ''));
     }
 });
+
+app.get('/', (req, res) => res.send("Bot Status: Active"));
+app.listen(process.env.PORT || 10000);
