@@ -1,108 +1,133 @@
-
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     delay,
     makeCacheableSignalKeyStore,
-    DisconnectReason,
-    Browsers
+    DisconnectReason
 } = require("@whiskeysockets/baileys");
 const { Telegraf } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
-const fs = require('fs-extra');
-const app = express();
+const fs = require('fs');
 
-// إعدادات البوت
-const TG_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I'; 
-const PORT = process.env.PORT || 10000;
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// إعدادات البوت والروابط
+const TG_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
+const CHANNEL_LINK = 'https://t.me/fz_z_Z';
 
 const bot = new Telegraf(TG_TOKEN);
 
-// سيرفر للبقاء حياً وتجاوز نظام Render
-app.get('/', (req, res) => res.send('Fares Queen Bot is Live! ✅'));
-app.listen(PORT, '0.0.0.0', () => console.log(`Server started on port ${PORT}`));
+// سيرفر للبقاء حياً على Render
+app.get('/', (req, res) => res.send('Fares Queen Bot is Online!'));
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
 
+/**
+ * وظيفة تشغيل الواتساب لكل مستخدم
+ */
 async function startWhatsApp(chatId, phoneNumber) {
     const sessionPath = `./sessions/${chatId}`;
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     
-    try {
-        const sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.creds.keys, pino({ level: "fatal" })),
-            },
-            printQRInTerminal: false,
-            logger: pino({ level: "fatal" }),
-            // استخدام هوية متصفح مستقرة جداً لضمان وصول الإشعار
-            browser: Browsers.ubuntu("Chrome"),
-            connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 0,
-            keepAliveIntervalMs: 10000
-        });
+    const sock = makeWASocket({
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.creds.keys, pino({ level: "fatal" })),
+        },
+        printQRInTerminal: false,
+        logger: pino({ level: "fatal" }),
+        browser: ["Ubuntu", "Chrome", "20.0.04"]
+    });
 
-        sock.ev.on('creds.update', saveCreds);
-
-        if (!sock.authState.creds.registered) {
-            // انتظار بسيط لضمان استقرار السيرفر قبل طلب الكود
-            await delay(8000);
+    // طلب كود الاقتران (Pairing Code)
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(phoneNumber);
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
-                await bot.telegram.sendMessage(chatId, `✅ **تم توليد كود الاقتران بنجاح:**\n\n🔢 الكود: \`${code}\`\n\nقم بفتح واتساب > الأجهزة المرتبطة > ربط برقم الهاتف وأدخل الكود.`, { parse_mode: 'Markdown' });
+                
+                await bot.telegram.sendMessage(chatId, 
+                    `✅ *تم توليد كود الاقتران*\n\n` +
+                    `🔢 الكود الخاص بك هو: \`${code}\`\n\n` +
+                    `خطوات الربط:\n` +
+                    `1. افتح الواتساب على هاتفك.\n` +
+                    `2. الإعدادات > الأجهزة المرتبطة.\n` +
+                    `3. ربط جهاز > الربط برقم الهاتف.\n` +
+                    `4. أدخل الكود المذكور أعلاه.`, 
+                    { parse_mode: 'Markdown' }
+                );
             } catch (err) {
-                await bot.telegram.sendMessage(chatId, "❌ فشل طلب الكود حالياً، يرجى المحاولة بعد دقائق.");
+                await bot.telegram.sendMessage(chatId, "❌ حدث خطأ أثناء طلب الكود. تأكد من الرقم وحاول مجدداً.");
             }
-        }
-
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
-            if (connection === 'close') {
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                if (shouldReconnect) {
-                    // إعادة تشغيل ذكية عند الانقطاع
-                    setTimeout(() => startWhatsApp(chatId, phoneNumber), 5000);
-                }
-            } else if (connection === 'open') {
-                await bot.telegram.sendMessage(chatId, "🎊 تم ربط الواتساب بنجاح! البوت سيعمل الآن 24 ساعة.");
-            }
-        });
-
-        sock.ev.on('messages.upsert', async (chatUpdate) => {
-            const msg = chatUpdate.messages[0];
-            if (!msg.message || msg.key.fromMe) return;
-
-            if (msg.key.remoteJid === 'status@broadcast') {
-                const participant = msg.key.participant;
-                await sock.readMessages([msg.key]);
-                await sock.sendMessage('status@broadcast', {
-                    react: { text: '💚', key: msg.key }
-                }, { statusJidList: [participant] });
-            }
-        });
-
-    } catch (e) {
-        console.error("WhatsApp Error: ", e);
+        }, 3000);
     }
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+        
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) {
+                startWhatsApp(chatId, phoneNumber);
+            } else {
+                await bot.telegram.sendMessage(chatId, "⚠️ تم تسجيل الخروج من الواتساب. أرسل الرقم مجدداً للربط.");
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+            }
+        } else if (connection === 'open') {
+            await bot.telegram.sendMessage(chatId, "🎊 مبروك! تم الاقتران بنجاح.\nالبوت الآن يتفاعل مع الحالات (Statuses) تلقائياً.");
+            // إشعار مباشر على الواتساب
+            await sock.sendMessage(sock.user.id, { text: `✅ تم ربط Fares Queen بنجاح!\nالقناة: ${CHANNEL_LINK}` });
+        }
+    });
+
+    // التفاعل التلقائي مع الحالات
+    sock.ev.on('messages.upsert', async (chatUpdate) => {
+        const msg = chatUpdate.messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+
+        const from = msg.key.remoteJid;
+
+        // التحقق من الحالات
+        if (from === 'status@broadcast') {
+            const sender = msg.key.participant;
+            
+            // قراءة الحالة تلقائياً
+            await sock.readMessages([msg.key]);
+
+            // التفاعل برمز (إيموجي) على الحالة لزيادة التفاعل
+            await sock.sendMessage(from, {
+                react: { text: '💚', key: msg.key }
+            }, { statusJidList: [sender] });
+
+            console.log(`[Status] Viewed and Reacted to: ${sender}`);
+        }
+    });
 }
 
+// أوامر بوت التليجرام
 bot.start((ctx) => {
-    ctx.reply(`👑 أهلاً بك في نظام الملكة الذهبية\nأرسل رقمك الآن مع مفتاح الدولة (967xxxxxxxxx) للربط.`);
+    ctx.reply(
+        `أهلاً بك في بوت Fares Queen 👑\n\n` +
+        `لربط رقمك، أرسل الرقم مع رمز الدولة مباشرة.\n` +
+        `مثال: 96777xxxxxxx\n\n` +
+        `تابعنا: @fz_z_Z`
+    );
 });
 
 bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
+    
+    // التحقق إذا كان المدخل رقماً فقط
     if (/^\d+$/.test(text)) {
-        ctx.reply("⏳ جاري تهيئة الطلب.. انتظر وصول الكود.");
+        await ctx.reply("⏳ جاري معالجة الطلب وتوليد كود الاقتران...");
         startWhatsApp(ctx.chat.id, text);
     } else {
-        ctx.reply("❌ يرجى إرسال رقم هاتف صحيح فقط.");
+        ctx.reply("❌ يرجى إرسال رقم هاتف صحيح (أرقام فقط بدون + أو فواصل).");
     }
 });
 
-// تشغيل البوت ومعالجة الأخطاء العالمية لمنع توقف السيرفر
-bot.launch().then(() => console.log("Telegram Bot Started..."));
-
-process.on('uncaughtException', (err) => console.error('Ignored Error:', err));
-process.on('unhandledRejection', (err) => console.error('Ignored Rejection:', err));
+bot.launch();
+console.log("Telegram Bot is running...");
