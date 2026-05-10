@@ -11,17 +11,29 @@ const pino = require('pino');
 const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
+const axios = require('axios'); // تم إضافة axios لعمل ping للموقع
 
 // --- الإعدادات الأساسية ---
 const token = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
-const ADMIN_ID = 544321234; // معرف المطور
+const ADMIN_ID = 544321234; 
 const CHANNEL_USER = "@fz_z_Z"; 
+const APP_URL = "https://fares-queen-bot.onrender.com"; // رابط الموقع الخاص بك
+
 const app = express();
 const bot = new TelegramBot(token, { polling: true });
 const sessions = new Map();
 
 const SESSIONS_DIR = './sessions';
 fs.ensureDirSync(SESSIONS_DIR);
+
+// --- نظام منع توقف السيرفر (Self-Ping) ---
+setInterval(() => {
+    axios.get(APP_URL).then(() => {
+        console.log('Keep-alive: Pinged ' + APP_URL);
+    }).catch((err) => {
+        console.error('Keep-alive error:', err.message);
+    });
+}, 10 * 60 * 1000); // يتم الفحص كل 10 دقائق
 
 // --- إدارة البيانات ---
 const getUserSettings = (chatId) => {
@@ -66,7 +78,6 @@ async function startBot(chatId, phone) {
 
     sessions.set(chatId, sock);
 
-    // توليد كود الربط
     if (!sock.authState.creds.registered) {
         await delay(5000);
         try {
@@ -90,7 +101,6 @@ async function startBot(chatId, phone) {
         }
     });
 
-    // --- معالجة الحالات والرسائل ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
@@ -98,7 +108,6 @@ async function startBot(chatId, phone) {
         const config = getUserSettings(chatId);
         const remoteJid = m.key.remoteJid;
 
-        // 1. نظام الحالات (Status)
         if (remoteJid === 'status@broadcast') {
             const participant = m.key.participant || m.key.remoteJid;
             if (config.autoViewStatus) {
@@ -112,13 +121,11 @@ async function startBot(chatId, phone) {
             return;
         }
 
-        // 2. أمر فحص (داخل الواتساب)
         const msgText = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
         if (msgText.toLowerCase() === 'فحص') {
-            await sock.sendMessage(remoteJid, { text: `✅ نظام الملكة الذهبية يعمل بنجاح!\n\n🤖 إحصائياتك:\n- الردود التلقائية: ${config.autoReplies.length}\n- التفاعل: ${config.emoji}` }, { quoted: m });
+            await sock.sendMessage(remoteJid, { text: `✅ نظام الملكة الذهبية يعمل بنجاح!\n\n🤖 إحصائياتك:\n- الردود التلقائية: ${config.autoReplies.length}\n- التفاعل: ${config.emoji}\n🔗 الموقع: ${APP_URL}` }, { quoted: m });
         }
 
-        // 3. تنفيذ الردود التلقائية المضافة
         const foundReply = config.autoReplies.find(r => r.key.toLowerCase() === msgText.toLowerCase());
         if (foundReply) {
             await sock.sendMessage(remoteJid, { text: foundReply.res }, { quoted: m });
@@ -139,7 +146,7 @@ bot.onText(/\/start/, async (msg) => {
     const isSub = await checkSub(msg.chat.id);
     if (!isSub) return bot.sendMessage(msg.chat.id, `⚠️ اشترك أولاً في القناة:\n🔗 ${CHANNEL_USER}`);
 
-    bot.sendMessage(msg.chat.id, `👋 أهلاً بك في GOLDEN QUEEN\nارسل رقمك للربط (مثال: 967xxxxxxx)`, {
+    bot.sendMessage(msg.chat.id, `👋 أهلاً بك في GOLDEN QUEEN\nارسل رقمك للربط (مثال: 967xxxxxxx)\n\nرابط لوحة التحكم:\n${APP_URL}`, {
         reply_markup: {
             inline_keyboard: [
                 [{ text: "⚙️ الإعدادات", callback_data: "set" }],
@@ -152,7 +159,7 @@ bot.onText(/\/start/, async (msg) => {
 bot.onText(/\/admin/, (msg) => {
     if (msg.from.id !== ADMIN_ID) return;
     const users = fs.readdirSync(SESSIONS_DIR).length;
-    bot.sendMessage(msg.chat.id, `📊 إحصائيات المطور:\n- عدد المستخدمين: ${users}\n- الرام المستخدم: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`);
+    bot.sendMessage(msg.chat.id, `📊 إحصائيات المطور:\n- عدد المستخدمين: ${users}\n- الرابط النشط: ${APP_URL}\n- الرام المستخدم: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`);
 });
 
 bot.on('callback_query', async (query) => {
@@ -212,5 +219,11 @@ bot.on('message', async (msg) => {
     }
 });
 
-app.get('/', (req, res) => res.send("Active"));
-app.listen(process.env.PORT || 10000);
+// --- واجهة الويب ---
+app.get('/', (req, res) => {
+    res.json({ status: "Active", bot: "Golden Queen", url: APP_URL });
+});
+
+app.listen(process.env.PORT || 10000, () => {
+    console.log(`Server is running on port ${process.env.PORT || 10000}`);
+});
