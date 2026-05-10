@@ -1,6 +1,6 @@
 {
-  "name": "fares-queen-24h",
-  "version": "2.0.0",
+  "name": "fares-queen-clean",
+  "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
