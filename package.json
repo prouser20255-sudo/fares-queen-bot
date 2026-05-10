@@ -1,16 +1,15 @@
 {
-  "name": "golden-queen-dashboard",
-  "version": "2.5.0",
+  "name": "golden-queen-v3",
+  "version": "3.0.0",
   "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.6.0",
     "node-telegram-bot-api": "^0.64.0",
     "express": "^4.18.2",
     "fs-extra": "^11.1.1",
-    "pino": "^8.15.0",
-    "axios": "^1.6.0"
-  },
-  "scripts": {
-    "start": "node index.js"
+    "pino": "^8.15.0"
   }
 }
