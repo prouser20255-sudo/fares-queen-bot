@@ -1,15 +1,16 @@
 {
-  "name": "golden-queen-fixed",
-  "version": "5.0.0",
+  "name": "fares-queen-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp & Telegram Automation",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.6.0",
-    "node-telegram-bot-api": "0.64.0",
-    "express": "4.18.2",
-    "fs-extra": "11.2.0",
-    "pino": "8.19.0"
+    "@whiskeysockets/baileys": "latest",
+    "telegraf": "latest",
+    "pino": "latest",
+    "express": "latest",
+    "qrcode-terminal": "latest"
   }
 }
