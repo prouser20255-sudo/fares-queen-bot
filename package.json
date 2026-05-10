@@ -1,16 +1,16 @@
 {
-  "name": "fares-queen-bot",
-  "version": "1.1.0",
-  "description": "WhatsApp Status & Telegram Bot",
+  "name": "fares-queen-24h",
+  "version": "2.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "latest",
-    "telegraf": "latest",
-    "pino": "latest",
-    "express": "latest",
-    "qrcode-terminal": "latest"
+    "@whiskeysockets/baileys": "^6.6.0",
+    "telegraf": "^4.16.3",
+    "pino": "^8.19.0",
+    "express": "^4.18.2",
+    "fs-extra": "^11.2.0",
+    "axios": "^1.6.7"
   }
 }
