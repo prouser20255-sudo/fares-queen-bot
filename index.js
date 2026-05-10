@@ -2,22 +2,28 @@ const {
     default: makeWASocket, 
     useMultiFileAuthState, 
     fetchLatestBaileysVersion, 
-    makeCacheableSignalKeyStore,
-    DisconnectReason
+    makeCacheableSignalKeyStore
 } = require("@whiskeysockets/baileys");
 const { Telegraf } = require('telegraf');
 const P = require('pino');
-const { Boom } = require("@hapi/boom");
+const http = require('http');
 
-// توكن البوت الخاص بك
+// --- إعداد سيرفر الويب لمنع Render من إغلاق البوت ---
+const server = http.createServer((req, res) => {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Bot is running and healthy!\n');
+});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
+
+// --- إعدادات البوت ---
 const TELEGRAM_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
-/**
- * وظيفة طلب كود الربط
- */
-async function requestWhatsAppCode(chatId, phoneNumber) {
-    // استخدام مجلد مؤقت متوافق مع Render لضمان الصلاحيات
+async function createWhatsAppSession(chatId, phoneNumber) {
+    // استخدام مجلد مؤقت متوافق مع Render
     const sessionPath = `/tmp/session_${chatId}_${Date.now()}`;
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
@@ -29,63 +35,53 @@ async function requestWhatsAppCode(chatId, phoneNumber) {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, P({ level: 'silent' })),
         },
-        browser: ["Ubuntu", "Chrome", "20.0.04"], // ضروري لعمل الكود
+        browser: ["Ubuntu", "Chrome", "20.0.04"],
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     try {
-        // تأخير بسيط لضمان تهيئة الاتصال
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // ننتظر قليلاً حتى يستقر الاتصال قبل طلب الكود
+        await new Promise(resolve => setTimeout(resolve, 5000));
         
         let code = await sock.requestPairingCode(phoneNumber.replace(/[^0-9]/g, ''));
         
         await bot.telegram.sendMessage(chatId, 
-            `✅ *تم استخراج كود الربط بنجاح*\n\n` +
+            `✅ *تم استخراج كود الربط*\n\n` +
             `🔢 الكود: \`${code}\`\n\n` +
-            `الآن افتح واتساب > الأجهزة المرتبطة > ربط برقم الهاتف وأدخل الكود.`, 
+            `قم بإدخاله في واتساب الآن.`, 
             { parse_mode: 'Markdown' }
         );
-    } catch (error) {
-        console.error("Pairing Error:", error);
-        await bot.telegram.sendMessage(chatId, `❌ فشل طلب الكود. تأكد من أن الرقم صحيح ويحتوي على مفتاح الدولة.`);
+    } catch (err) {
+        console.error(err);
+        await bot.telegram.sendMessage(chatId, "❌ حدث خطأ أثناء طلب الكود. حاول مرة أخرى.");
     }
 
-    // إغلاق الاتصال بعد استخراج الكود لتوفير الموارد على Render
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
-            if (reason === DisconnectReason.loggedOut) {
-                console.log("Device Logged Out");
-            }
-        } else if (connection === 'open') {
-            bot.telegram.sendMessage(chatId, `🎉 تم ربط واتساب بنجاح!`);
+        const { connection } = update;
+        if (connection === 'open') {
+            bot.telegram.sendMessage(chatId, "🎉 تم ربط واتساب بنجاح!");
         }
     });
 }
 
-// أوامر التليجرام
+// --- أوامر التليجرام ---
 bot.start((ctx) => {
-    ctx.reply('مرحباً بك في نظام ربط واتساب! 🚀\n\nأرسل رقم هاتفك الآن (بصيغة دولية) للحصول على كود الربط.\nمثال: 967777777777');
+    ctx.reply('أهلاً بك في بوت ربط واتساب! 🚀\nأرسل رقم هاتفك مع مفتاح الدولة (أرقام فقط).\nمثال: 967777777777');
 });
 
 bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
-    
     if (/^\d+$/.test(text) && text.length > 8) {
-        await ctx.reply('⏳ جاري الاتصال بسيرفرات واتساب لطلب الكود...');
-        await requestWhatsAppCode(ctx.chat.id, text);
+        await ctx.reply('⏳ جاري طلب الكود من سيرفرات واتساب...');
+        await createWhatsAppSession(ctx.chat.id, text);
     } else {
-        ctx.reply('❌ خطأ: يرجى إرسال أرقام فقط (مثال: 9665xxxxxxxx).');
+        ctx.reply('❌ يرجى إرسال رقم هاتف صحيح.');
     }
 });
 
-// تشغيل البوت ومعالجة أخطاء الشبكة
-bot.launch()
-    .then(() => console.log('🤖 Telegram Bot is Running...'))
-    .catch((err) => console.error('❌ Failed to launch Telegram Bot:', err));
+bot.launch().then(() => console.log('🤖 Telegram Bot Started!'));
 
-// التعامل مع إغلاق السيرفر بشكل نظيف
+// التعامل مع الإغلاق
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
