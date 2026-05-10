@@ -16,7 +16,7 @@ const axios = require('axios');
 const token = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
 const ADMIN_ID = 544321234; 
 const CHANNEL_USER = "@fz_z_Z"; 
-const APP_URL = "https://fares-queen-bot.onrender.com"; // رابط الموقع الخاص بك
+const APP_URL = "https://fares-queen-bot.onrender.com"; 
 
 const app = express();
 const bot = new TelegramBot(token, { polling: true });
@@ -25,28 +25,16 @@ const sessions = new Map();
 const SESSIONS_DIR = './sessions';
 fs.ensureDirSync(SESSIONS_DIR);
 
-// --- نظام منع توقف السيرفر (Self-Ping) ---
+// --- نظام منع توقف السيرفر (Keep-Alive) ---
 setInterval(() => {
-    axios.get(APP_URL).then(() => {
-        console.log('Keep-alive: Pinged ' + APP_URL);
-    }).catch((err) => {
-        console.error('Keep-alive error:', err.message);
-    });
-}, 5 * 60 * 1000); // تم تقليل المدة لـ 5 دقائق لضمان النشاط
+    axios.get(APP_URL).catch(() => {});
+}, 5 * 60 * 1000);
 
 // --- إدارة البيانات ---
 const getUserSettings = (chatId) => {
     const filePath = path.join(SESSIONS_DIR, String(chatId), 'settings.json');
-    if (fs.existsSync(filePath)) {
-        return fs.readJsonSync(filePath);
-    }
-    return {
-        emoji: "👑",
-        autoViewStatus: true,
-        autoReactStatus: true,
-        alwaysOnline: true,
-        autoReplies: []
-    };
+    if (fs.existsSync(filePath)) return fs.readJsonSync(filePath);
+    return { emoji: "👑", autoViewStatus: true, autoReactStatus: true, autoReplies: [] };
 };
 
 const saveUserSettings = (chatId, data) => {
@@ -55,45 +43,50 @@ const saveUserSettings = (chatId, data) => {
     fs.writeJsonSync(path.join(userDir, 'settings.json'), data);
 };
 
-// --- محرك الواتساب المحسن ---
+// --- محرك الواتساب (نسخة التنظيف العميق) ---
 async function startBot(chatId, phone) {
-    // إغلاق أي جلسة قديمة لنفس المستخدم لتجنب "فشل طلب الكود"
+    const sessionDir = path.join(SESSIONS_DIR, String(chatId));
+
+    // 1. تنظيف شامل قبل البدء (Deep Clean)
     if (sessions.has(chatId)) {
         try {
-            sessions.get(chatId).end();
+            const oldSock = sessions.get(chatId);
+            oldSock.ev.removeAllListeners();
+            oldSock.end();
             sessions.delete(chatId);
         } catch (e) {}
     }
 
-    const sessionDir = path.join(SESSIONS_DIR, String(chatId));
-    
-    // تنظيف المجلد إذا لم يكن هناك تسجيل دخول مكتمل
-    if (!fs.existsSync(path.join(sessionDir, 'creds.json'))) {
-        fs.emptyDirSync(sessionDir);
+    // إذا كان المجلد موجوداً ولم يتم الربط بعد، نحذفه تماماً لنبدأ من الصفر
+    if (fs.existsSync(sessionDir) && !fs.existsSync(path.join(sessionDir, 'creds.json'))) {
+        fs.removeSync(sessionDir);
     }
+    fs.ensureDirSync(sessionDir);
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: Browsers.ubuntu("Chrome"),
+        // تغيير هوية المتصفح إلى macOS Desktop لتقليل نسبة الحظر
+        browser: ["Mac OS", "Chrome", "121.0.6167.184"],
         printQRInTerminal: false,
         markOnlineOnConnect: true,
-        connectTimeoutMs: 60000, // زيادة مهلة الاتصال
+        connectTimeoutMs: 90000, // زيادة المهلة لـ 90 ثانية
+        defaultQueryTimeoutMs: 0,
     });
 
     sessions.set(chatId, sock);
 
-    // طلب كود الربط
+    // 2. الانتظار حتى يستقر الاتصال بالخادم قبل طلب الكود
     if (!sock.authState.creds.registered) {
-        await delay(5000);
+        await delay(10000); // انتظار 10 ثوانٍ كاملة
         try {
             const code = await sock.requestPairingCode(phone);
             bot.sendMessage(chatId, `✅ كود الربط الخاص بك هو:\n\n\`${code}\``, { parse_mode: 'Markdown' });
         } catch (e) {
-            console.error("Pairing Error:", e);
-            bot.sendMessage(chatId, "❌ فشل طلب الكود.\nتأكد من أن الرقم صحيح ومنتظم، وحاول مجدداً بعد دقيقة.");
+            console.error("Error Requesting Code:", e);
+            bot.sendMessage(chatId, "❌ فشل طلب الكود.\n\n**السبب المحتمل:** خوادم واتساب ترفض الطلبات المتكررة من هذا السيرفر حالياً.\n**الحل:** انتظر 15 دقيقة ثم ارسل الرقم مرة أخرى.");
         }
     }
 
@@ -102,7 +95,7 @@ async function startBot(chatId, phone) {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
-            bot.sendMessage(chatId, "🔓 تم الاتصال بنجاح! البوت الآن يعمل على حسابك.");
+            bot.sendMessage(chatId, "🔓 تم الاتصال بنجاح! البوت الآن يعمل.");
         }
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -110,14 +103,13 @@ async function startBot(chatId, phone) {
         }
     });
 
+    // معالجة الرسائل والحالات كما هي
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
-
         const config = getUserSettings(chatId);
         const remoteJid = m.key.remoteJid;
 
-        // نظام الحالات
         if (remoteJid === 'status@broadcast') {
             if (config.autoViewStatus) await sock.readMessages([m.key]);
             if (config.autoReactStatus) {
@@ -128,17 +120,12 @@ async function startBot(chatId, phone) {
             return;
         }
 
-        // الردود التلقائية
         const msgText = (m.message.conversation || m.message.extendedTextMessage?.text || "").toLowerCase().trim();
-        
         if (msgText === 'فحص') {
-            await sock.sendMessage(remoteJid, { text: `✅ نظام الملكة الذهبية يعمل!\n🔗 الرابط: ${APP_URL}` }, { quoted: m });
+            await sock.sendMessage(remoteJid, { text: `✅ نظام الملكة الذهبية يعمل!\n🔗 ${APP_URL}` }, { quoted: m });
         }
-
         const foundReply = config.autoReplies.find(r => r.key.toLowerCase() === msgText);
-        if (foundReply) {
-            await sock.sendMessage(remoteJid, { text: foundReply.res }, { quoted: m });
-        }
+        if (foundReply) await sock.sendMessage(remoteJid, { text: foundReply.res }, { quoted: m });
     });
 }
 
@@ -154,7 +141,7 @@ bot.onText(/\/start/, async (msg) => {
     const isSub = await checkSub(msg.chat.id);
     if (!isSub) return bot.sendMessage(msg.chat.id, `⚠️ اشترك أولاً في القناة:\n🔗 ${CHANNEL_USER}`);
 
-    bot.sendMessage(msg.chat.id, `👋 أهلاً بك في GOLDEN QUEEN\nارسل رقمك مع مفتاح الدولة للربط.\nمثال: 96777xxxxxxx\n\n🔗 لوحة التحكم:\n${APP_URL}`, {
+    bot.sendMessage(msg.chat.id, `👋 أهلاً بك في GOLDEN QUEEN\nارسل رقمك للربط (967xxxxxxx)\n\n🔗 لوحة التحكم:\n${APP_URL}`, {
         reply_markup: {
             inline_keyboard: [
                 [{ text: "⚙️ الإعدادات", callback_data: "set" }],
@@ -164,31 +151,53 @@ bot.onText(/\/start/, async (msg) => {
     });
 });
 
-bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    const config = getUserSettings(chatId);
-
-    if (query.data === "set") {
-        bot.sendMessage(chatId, `🛠 إعداداتك الحالية:\n- التفاعل: ${config.emoji}\n- مشاهدة الحالات: ${config.autoViewStatus ? "✅" : "❌"}`, {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "📝 تغيير الإيموجي", callback_data: "ch_em" }],
-                    [{ text: "تبديل المشاهدة", callback_data: "tog_view" }]
-                ]
-            }
-        });
-    }
-    // ... بقية معالجات الـ callback (add_r, ch_em, tog_view) كما في الكود السابق
-});
-
 bot.on('message', async (msg) => {
     if (msg.text && /^[0-9]{10,}$/.test(msg.text.replace('+', ''))) {
         const isSub = await checkSub(msg.chat.id);
         if (!isSub) return bot.sendMessage(msg.chat.id, `⚠️ اشترك أولاً: ${CHANNEL_USER}`);
-        bot.sendMessage(msg.chat.id, "⏳ جاري محاولة إنشاء كود الربط...");
+        bot.sendMessage(msg.chat.id, "⏳ جاري تهيئة جلسة نظيفة وطلب الكود...");
         startBot(msg.chat.id, msg.text.replace(/[^0-9]/g, ''));
     }
 });
 
-app.get('/', (req, res) => res.send("Bot is Running..."));
+// الأكواد الباقية للـ Callback Query...
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const config = getUserSettings(chatId);
+    if (query.data === "set") {
+        bot.sendMessage(chatId, `🛠 إعداداتك:\nإيموجي: ${config.emoji}\nمشاهدة الحالات: ${config.autoViewStatus ? "✅" : "❌"}`, {
+            reply_markup: { inline_keyboard: [[{ text: "📝 تغيير الإيموجي", callback_data: "ch_em" }], [{ text: "تبديل المشاهدة", callback_data: "tog_view" }]] }
+        });
+    }
+    if (query.data === "add_r") {
+        bot.sendMessage(chatId, "📌 ارسل الكلمة المفتاحية:");
+        bot.once('message', (m1) => {
+            if (m1.chat.id !== chatId) return;
+            bot.sendMessage(chatId, `✅ الكلمة: ${m1.text}\nالآن ارسل الرد:`);
+            bot.once('message', (m2) => {
+                if (m2.chat.id !== chatId) return;
+                config.autoReplies.push({ key: m1.text, res: m2.text });
+                saveUserSettings(chatId, config);
+                bot.sendMessage(chatId, "✅ تم الحفظ!");
+            });
+        });
+    }
+    if (query.data === "ch_em") {
+        bot.sendMessage(chatId, "ارسل الإيموجي الجديد:");
+        bot.once('message', (m) => {
+            if (m.chat.id === chatId) {
+                config.emoji = m.text;
+                saveUserSettings(chatId, config);
+                bot.sendMessage(chatId, "✅ تم التغيير.");
+            }
+        });
+    }
+    if (query.data === "tog_view") {
+        config.autoViewStatus = !config.autoViewStatus;
+        saveUserSettings(chatId, config);
+        bot.answerCallbackQuery(query.id, { text: "تم التحديث" });
+    }
+});
+
+app.get('/', (req, res) => res.json({ status: "Active", url: APP_URL }));
 app.listen(process.env.PORT || 10000);
