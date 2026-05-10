@@ -1,16 +1,15 @@
 {
-  "name": "golden-queen-final",
-  "version": "3.0.0",
-  "description": "WhatsApp Bot for Render",
+  "name": "golden-queen-v4",
+  "version": "4.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.6.0",
-    "node-telegram-bot-api": "^0.64.0",
-    "express": "^4.18.2",
-    "fs-extra": "^11.2.0",
-    "pino": "^8.19.0"
+    "@whiskeysockets/baileys": "6.6.0",
+    "node-telegram-bot-api": "0.64.0",
+    "express": "4.18.2",
+    "fs-extra": "11.2.0",
+    "pino": "8.19.0"
   }
 }
